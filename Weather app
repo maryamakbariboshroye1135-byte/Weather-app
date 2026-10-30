@@ -1,0 +1,750 @@
+import requests
+import threading
+import math
+
+from datetime import datetime
+
+from kivy.app import App
+from kivy.clock import Clock
+from kivy.core.window import Window
+from kivy.metrics import dp, sp
+from kivy.graphics import Color, RoundedRectangle
+from kivy.uix.widget import Widget
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.scrollview import ScrollView
+from kivy.utils import get_color_from_hex
+
+
+# =========================
+# APP SETTINGS
+# =========================
+
+Window.clearcolor = get_color_from_hex("#10182F")
+
+BG = "#10182F"
+CARD = "#202F50"
+BLUE = "#63D5FF"
+WHITE = "#FFFFFF"
+MUTED = "#AFC1DE"
+
+
+# =========================
+# GRAPHIC WEATHER ICONS
+# =========================
+
+class WeatherIcon(Widget):
+
+    def __init__(self, condition="cloud", **kwargs):
+        super().__init__(**kwargs)
+        self.condition = condition
+        self.bind(pos=self.draw, size=self.draw)
+
+    def draw(self, *args):
+
+        self.canvas.clear()
+
+        x, y = self.pos
+        w, h = self.size
+
+        cx = x + w / 2
+        cy = y + h / 2
+
+        with self.canvas:
+
+            if self.condition == "sun":
+
+                Color(1, 0.72, 0.18, 1)
+
+                for i in range(8):
+
+                    angle = i * math.pi / 4
+
+                    x1 = cx + math.cos(angle) * w * 0.28
+                    y1 = cy + math.sin(angle) * h * 0.28
+
+                    x2 = cx + math.cos(angle) * w * 0.42
+                    y2 = cy + math.sin(angle) * h * 0.42
+
+                    from kivy.graphics import Line
+
+                    Line(
+                        points=[x1, y1, x2, y2],
+                        width=2.5
+                    )
+
+                from kivy.graphics import Ellipse
+
+                Ellipse(
+                    pos=(cx-w*.22, cy-h*.22),
+                    size=(w*.44, h*.44)
+                )
+
+            else:
+
+                from kivy.graphics import Ellipse, Line
+
+                Color(0.72, 0.84, 0.98, 1)
+
+                Ellipse(
+                    pos=(cx-w*.30, cy-h*.02),
+                    size=(w*.38, h*.38)
+                )
+
+                Ellipse(
+                    pos=(cx-w*.05, cy+h*.02),
+                    size=(w*.42, h*.42)
+                )
+
+                Ellipse(
+                    pos=(cx+w*.10, cy-h*.02),
+                    size=(w*.32, h*.32)
+                )
+
+                RoundedRectangle(
+                    pos=(cx-w*.32, cy-h*.16),
+                    size=(w*.66, h*.27),
+                    radius=[dp(12)]
+                )
+
+                if self.condition == "rain":
+
+                    Color(0.25, 0.72, 1, 1)
+
+                    for i in range(3):
+
+                        rx = cx + (i-1)*w*.20
+
+                        Line(
+                            points=[
+                                rx, cy-h*.25,
+                                rx-w*.04, cy-h*.43
+                            ],
+                            width=2.5
+                        )
+
+                elif self.condition == "snow":
+
+                    Color(0.55, 0.90, 1, 1)
+
+                    for i in range(3):
+
+                        sx = cx + (i-1)*w*.20
+                        sy = cy-h*.34
+
+                        Line(
+                            points=[
+                                sx-w*.05, sy,
+                                sx+w*.05, sy
+                            ],
+                            width=2
+                        )
+
+                        Line(
+                            points=[
+                                sx, sy-w*.05,
+                                sx, sy+w*.05
+                            ],
+                            width=2
+                        )
+
+                elif self.condition == "storm":
+
+                    Color(1, 0.80, 0.15, 1)
+
+                    from kivy.graphics import Triangle
+
+                    Triangle(
+                        points=[
+                            cx, cy-h*.24,
+                            cx-w*.13, cy-h*.48,
+                            cx+w*.02, cy-h*.48
+                        ]
+                    )
+
+                    Triangle(
+                        points=[
+                            cx+w*.02, cy-h*.40,
+                            cx+w*.15, cy-h*.40,
+                            cx-w*.04, cy-h*.62
+                        ]
+                    )
+
+
+def get_weather_type(description):
+
+    d = description.lower()
+
+    if "thunder" in d:
+        return "storm"
+
+    if "snow" in d or "blizzard" in d:
+        return "snow"
+
+    if "rain" in d or "drizzle" in d:
+        return "rain"
+
+    if "sun" in d or "clear" in d:
+        return "sun"
+
+    return "cloud"
+
+
+# =========================
+# ROUNDED CARD
+# =========================
+
+class Card(BoxLayout):
+
+    def __init__(self, color=CARD, radius=18, **kwargs):
+
+        super().__init__(**kwargs)
+
+        with self.canvas.before:
+
+            Color(*get_color_from_hex(color))
+
+            self.bg = RoundedRectangle(
+                pos=self.pos,
+                size=self.size,
+                radius=[dp(radius)]
+            )
+
+        self.bind(
+            pos=self.update_bg,
+            size=self.update_bg
+        )
+
+    def update_bg(self, *args):
+
+        self.bg.pos = self.pos
+        self.bg.size = self.size
+
+
+# =========================
+# MAIN APP
+# =========================
+
+class WeatherApp(App):
+
+    def build(self):
+
+        self.title = "Weather App"
+        self.loading = False
+
+        root = BoxLayout(
+            orientation="vertical",
+            padding=dp(15),
+            spacing=dp(12)
+        )
+
+        # HEADER
+
+        header = BoxLayout(
+            size_hint_y=None,
+            height=dp(42)
+        )
+
+        header.add_widget(Label(
+            text="WEATHER",
+            font_size=sp(23),
+            bold=True,
+            color=get_color_from_hex(WHITE),
+            halign="left"
+        ))
+
+        header.add_widget(Label(
+            text="LIVE FORECAST",
+            font_size=sp(11),
+            color=get_color_from_hex(BLUE),
+            halign="right"
+        ))
+
+        root.add_widget(header)
+
+        # SEARCH BAR
+
+        search = BoxLayout(
+            size_hint_y=None,
+            height=dp(50),
+            spacing=dp(8)
+        )
+
+        self.city_input = TextInput(
+            text="London",
+            hint_text="Enter city name...",
+            multiline=False,
+            font_size=sp(16),
+            padding=dp(12),
+            foreground_color=(1, 1, 1, 1),
+            hint_text_color=(0.7, 0.75, 0.85, 1),
+            background_normal="",
+            background_active="",
+            background_color=get_color_from_hex(CARD)
+        )
+
+        self.search_btn = Button(
+            text="Search",
+            size_hint_x=None,
+            width=dp(90),
+            background_normal="",
+            background_color=get_color_from_hex(BLUE),
+            color=get_color_from_hex(BG),
+            bold=True
+        )
+
+        self.search_btn.bind(
+            on_release=self.search_weather
+        )
+
+        self.city_input.bind(
+            on_text_validate=self.search_weather
+        )
+
+        search.add_widget(self.city_input)
+        search.add_widget(self.search_btn)
+
+        root.add_widget(search)
+
+        # SCROLL AREA
+
+        scroll = ScrollView(
+            do_scroll_x=False,
+            bar_width=dp(3)
+        )
+
+        self.content = BoxLayout(
+            orientation="vertical",
+            spacing=dp(14),
+            size_hint_y=None,
+            padding=[0, dp(3), 0, dp(15)]
+        )
+
+        self.content.bind(
+            minimum_height=self.content.setter("height")
+        )
+
+        scroll.add_widget(self.content)
+        root.add_widget(scroll)
+
+        self.status = Label(
+            text="Connecting...",
+            size_hint_y=None,
+            height=dp(28),
+            font_size=sp(12),
+            color=get_color_from_hex(MUTED)
+        )
+
+        root.add_widget(self.status)
+
+        Clock.schedule_once(
+            lambda dt: self.load_weather("London"),
+            0.5
+        )
+
+        return root
+
+    # =====================
+    # TEXT HELPER
+    # =====================
+
+    def text(self, value, size=15, color=WHITE, bold=False):
+
+        return Label(
+            text=str(value),
+            font_size=sp(size),
+            color=get_color_from_hex(color),
+            bold=bold,
+            halign="center",
+            valign="middle"
+        )
+
+    # =====================
+    # SEARCH
+    # =====================
+
+    def search_weather(self, *args):
+
+        city = self.city_input.text.strip()
+
+        if not city:
+
+            self.status.text = "Enter a city name."
+            return
+
+        self.load_weather(city)
+
+    # =====================
+    # LOAD DATA
+    # =====================
+
+    def load_weather(self, city):
+
+        if self.loading:
+            return
+
+        self.loading = True
+
+        self.search_btn.disabled = True
+        self.status.text = "Loading weather..."
+
+        threading.Thread(
+            target=self.fetch_weather,
+            args=(city,),
+            daemon=True
+        ).start()
+
+    def fetch_weather(self, city):
+
+        try:
+
+            url = (
+                "https://wttr.in/"
+                + requests.utils.quote(city)
+                + "?format=j1"
+            )
+
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0"
+                },
+                timeout=20
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            current = data["current_condition"][0]
+
+            forecast = data.get("weather", [])
+
+            Clock.schedule_once(
+                lambda dt: self.display_weather(
+                    city,
+                    current,
+                    forecast
+                )
+            )
+
+        except Exception as e:
+
+            error = str(e)
+
+            Clock.schedule_once(
+                lambda dt: self.show_error(error)
+            )
+
+    # =====================
+    # CLEAR CONTENT
+    # =====================
+
+    def clear(self):
+
+        self.content.clear_widgets()
+
+    # =====================
+    # SECTION TITLE
+    # =====================
+
+    def section(self, title):
+
+        label = self.text(
+            title,
+            17,
+            WHITE,
+            True
+        )
+
+        label.size_hint_y = None
+        label.height = dp(35)
+
+        self.content.add_widget(label)
+
+    # =====================
+    # WEATHER DETAILS
+    # =====================
+
+    def detail_card(self, icon, title, value):
+
+        card = Card(
+            orientation="vertical",
+            padding=dp(9),
+            spacing=dp(4)
+        )
+
+        card.add_widget(
+            self.text(icon, 23, BLUE)
+        )
+
+        card.add_widget(
+            self.text(title, 12, MUTED)
+        )
+
+        card.add_widget(
+            self.text(value, 17, WHITE, True)
+        )
+
+        return card
+
+    # =====================
+    # DISPLAY WEATHER
+    # =====================
+
+    def display_weather(self, city, current, forecast):
+
+        self.loading = False
+        self.search_btn.disabled = False
+
+        self.clear()
+
+        description = current["weatherDesc"][0]["value"]
+
+        temp = current["temp_C"]
+        feels = current["FeelsLikeC"]
+
+        # MAIN WEATHER CARD
+
+        hero = Card(
+            color="#263D68",
+            radius=24,
+            orientation="vertical",
+            padding=dp(15),
+            spacing=dp(5)
+        )
+
+        hero.size_hint_y = None
+        hero.height = dp(270)
+
+        hero.add_widget(
+            self.text(city.title(), 23, WHITE, True)
+        )
+
+        hero.add_widget(
+            self.text(
+                datetime.now().strftime("%A, %d %B"),
+                12,
+                MUTED
+            )
+        )
+
+        hero.add_widget(WeatherIcon(
+            condition=get_weather_type(description),
+            size_hint_y=None,
+            height=dp(85)
+        ))
+
+        hero.add_widget(
+            self.text(temp + "°C", 45, WHITE, True)
+        )
+
+        hero.add_widget(
+            self.text(description, 16, "#D5E6FF")
+        )
+
+        hero.add_widget(
+            self.text("Feels like " + feels + "°C", 13, MUTED)
+        )
+
+        self.content.add_widget(hero)
+
+        # DETAILS
+
+        self.section("WEATHER DETAILS")
+
+        grid = GridLayout(
+            cols=2,
+            spacing=dp(10),
+            size_hint_y=None,
+            row_default_height=dp(105),
+            row_force_default=True
+        )
+
+        grid.bind(
+            minimum_height=grid.setter("height")
+        )
+
+        details = [
+
+            ("WATER", "Humidity", current["humidity"] + "%"),
+
+            ("WIND", "Wind Speed",
+             current["windspeedKmph"] + " km/h"),
+
+            ("TEMP", "Feels Like", feels + "°C"),
+
+            ("CLOUD", "Cloud Cover",
+             current["cloudcover"] + "%"),
+
+            ("UV", "UV Index",
+             current.get("uvIndex", "--")),
+
+            ("PRESSURE", "Pressure",
+             current.get("pressure", "--") + " mb")
+        ]
+
+        for icon, title, value in details:
+
+            grid.add_widget(
+                self.detail_card(
+                    icon,
+                    title,
+                    value
+                )
+            )
+
+        self.content.add_widget(grid)
+
+        # HOURLY FORECAST
+
+        self.section("HOURLY FORECAST")
+
+        if forecast:
+
+            hours = forecast[0].get("hourly", [])
+
+            row = GridLayout(
+                cols=4,
+                spacing=dp(8),
+                size_hint_y=None,
+                height=dp(115)
+            )
+
+            for hour in hours[:8]:
+
+                time_code = int(hour.get("time", "0"))
+
+                hour_text = f"{time_code // 100:02d}:00"
+
+                card = Card(
+                    orientation="vertical",
+                    padding=dp(5),
+                    spacing=dp(3)
+                )
+
+                card.add_widget(
+                    self.text(hour_text, 11, MUTED)
+                )
+
+                card.add_widget(WeatherIcon(
+                    condition=get_weather_type(
+                        hour["weatherDesc"][0]["value"]
+                    ),
+                    size_hint_y=None,
+                    height=dp(38)
+                ))
+
+                card.add_widget(
+                    self.text(
+                        hour.get("tempC", "--") + "°",
+                        14,
+                        WHITE,
+                        True
+                    )
+                )
+
+                row.add_widget(card)
+
+            self.content.add_widget(row)
+
+        # 3 DAY FORECAST
+
+        self.section("3-DAY FORECAST")
+
+        for day in forecast[:3]:
+
+            try:
+
+                day_name = datetime.strptime(
+                    day["date"],
+                    "%Y-%m-%d"
+                ).strftime("%A")
+
+            except Exception:
+
+                day_name = day.get("date", "")
+
+            hours = day.get("hourly", [])
+
+            midday = (
+                hours[4]
+                if len(hours) > 4
+                else hours[0] if hours else {}
+            )
+
+            description = midday.get(
+                "weatherDesc",
+                [{"value": "Unknown"}]
+            )[0]["value"]
+
+            card = Card(
+                orientation="horizontal",
+                padding=dp(9),
+                spacing=dp(6)
+            )
+
+            card.size_hint_y = None
+            card.height = dp(76)
+
+            card.add_widget(
+                self.text(day_name, 12, WHITE, True)
+            )
+
+            card.add_widget(WeatherIcon(
+                condition=get_weather_type(description),
+                size_hint_x=None,
+                width=dp(45)
+            ))
+
+            card.add_widget(
+                self.text(
+                    description,
+                    11,
+                    MUTED
+                )
+            )
+
+            card.add_widget(
+                self.text(
+                    day.get("mintempC", "--")
+                    + "° / "
+                    + day.get("maxtempC", "--")
+                    + "°",
+                    14,
+                    WHITE,
+                    True
+                )
+            )
+
+            self.content.add_widget(card)
+
+        self.status.text = "Weather updated successfully."
+
+    # =====================
+    # ERROR HANDLING
+    # =====================
+
+    def show_error(self, error):
+
+        self.loading = False
+
+        self.search_btn.disabled = False
+
+        self.status.text = (
+            "Unable to load weather. Check your internet."
+        )
+
+        print("Weather error:", error)
+
+
+# =========================
+# RUN APP
+# =========================
+
+if __name__ == "__main__":
+
+    WeatherApp().run()
